@@ -8,7 +8,7 @@ maintainable, and run offline against a sosreport on a local machine.
 Two modes
 ---------
 * Offline (default): `python3 server.py [--data DIR]` serves the local
-  `sarXX` files in DIR, read-only, single user, bound to localhost. This is
+  `sarNN` files in DIR, read-only, single user, bound to localhost. This is
   the original sosreport-analysis workflow and implicitly trusts its input.
 
 * Hosted/multi-tenant: `python3 server.py --uploads-dir DIR` turns on
@@ -55,8 +55,8 @@ from urllib.parse import parse_qs, urlparse
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(HERE, "static")
 
-# sar text report filenames in offline mode: `sarXX` (XX = day of month). The
-# binary `saXX` files are intentionally ignored, only text sar data is read.
+# sar text report filenames in offline mode: `sarNN` (NN = day of month). The
+# binary `saNN` files are intentionally ignored, only text sar data is read.
 # TODO: Support binary decoding later.
 SAR_FILE_RE = re.compile(r"^sar(\d{2})$")
 
@@ -79,7 +79,7 @@ class Config:
     # Hosted mode (None => offline). When set, per-session isolation is active.
     uploads_dir: str | None = None
     max_upload_bytes = 25 * 1024 * 1024  # per single uploaded file
-    max_session_bytes = 100 * 1024 * 1024  # total per session
+    max_session_bytes = 512 * 1024 * 1024  # total per session
     max_files_per_session = 64
     session_ttl_seconds = 6 * 3600
     secure_cookie = False  # set True if behind TLS (--behind-tls)
@@ -158,17 +158,43 @@ def _report_json(path: str) -> str:
     return _parse_cached(path, os.path.getmtime(path), Config.multiuser())
 
 
+def _sar_banner(body: bytes):
+    """If ``body`` looks like a text sar report, return its parsed banner fields
+    (host, kernel, arch, ncpu, day); otherwise return None.
+
+    This is what tells a real sar text report apart from the binary `saNN`
+    companion files (and any other non-sar upload). Binary files contain NUL
+    bytes, which a text report never does, and a real report opens with a sar
+    banner line that yields a date and/or a CPU count.
+    """
+    head = body[:65536]
+    if b"\x00" in head:
+        return None  # binary (e.g. a saNN file), not a text report
+    for line in head.split(b"\n"):
+        if not line.strip():
+            continue  # skip leading blank lines
+        host, kernel, arch, ncpu, day = sar._parse_header_line(
+            line.decode(errors="replace")
+        )
+        return (host, kernel, arch, ncpu, day) if (day or ncpu or host) else None
+    return None
+
+
 def _file_meta(data_dir: str, multiuser: bool) -> list[dict]:
     out = []
     for name in _list_files(data_dir, multiuser):
         path = os.path.join(data_dir, name)
-        host = day = None
         try:
-            with open(path, "r", errors="replace") as fh:
-                first = fh.readline()
-            host, _, _, _, day = sar._parse_header_line(first)
+            with open(path, "rb") as fh:
+                banner = _sar_banner(fh.read(65536))
         except OSError:
-            pass
+            continue
+        if banner is None:
+            if multiuser:
+                continue  # hide binary/non-sar uploads from the picker
+            host = day = None  # offline mode trusts its files; list it anyway
+        else:
+            host, day = banner[0], banner[4]
         out.append({"name": name, "day": day, "host": host})
     out.sort(key=lambda m: (m["day"] or "", m["name"]))
     return out
@@ -212,6 +238,22 @@ class Handler(BaseHTTPRequestHandler):
     def setup(self) -> None:
         super().setup()
         self._set_cookie: str | None = None
+
+    def handle(self) -> None:
+        # A browser that reloads, switches files, or navigates away drops the
+        # connection mid-response; writing to it then raises BrokenPipe /
+        # ConnectionReset. That's benign (the client just re-requests), so
+        # swallow it instead of dumping a traceback for every cancelled request.
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
+
+    def finish(self) -> None:
+        try:
+            super().finish()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     # The main user session start here
     def _session_token(self) -> str:
@@ -329,10 +371,15 @@ class Handler(BaseHTTPRequestHandler):
             if not path:
                 self._send_error_json(404, f"no such sar file: {name!r}")
                 return
+            # Only the parse is wrapped: a write that fails because the client
+            # went away must NOT be relabeled as a 500 parse error (it bubbles
+            # up to handle() and is swallowed there instead).
             try:
-                self._send_json(_report_json(path))
+                body = _report_json(path)
             except Exception as exc:  # noqa: BLE001, report parse failures as 500
                 self._send_error_json(500, f"parse error: {exc}")
+                return
+            self._send_json(body)
             return
 
         self._send_error_json(404, "not found")
@@ -377,6 +424,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send_error_json(413, "session storage quota exceeded")
             return
 
+        # Only accept text sar reports. The binary `saNN` companion files (and
+        # any other non-sar upload) would otherwise be stored and listed but
+        # parse to an empty, blank report. Reject them up front with a clear msg.
+        if _sar_banner(body) is None:
+            self._send_error_json(
+                415, "not a text sar report (the binary saNN files aren't supported)"
+            )
+            return
+
         # Scrub the hostname from the sar header before it ever touches disk:
         # in a customer's sosreport the machine name can be PII. Replaced with a
         # random label, so neither the stored file nor the served JSON leaks it,
@@ -401,13 +457,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send_error_json(500, f"could not store upload: {exc}")
             return
 
-        # Parse once now so we can report a clear error on garbage input
-        try:
-            host, _, _, _, day = sar._parse_header_line(
-                body.split(b"\n", 1)[0].decode(errors="replace")
-            )
-        except Exception:  # noqa: BLE001
-            host = day = None
+        # Report the (now scrubbed) host and day back for the upload status line.
+        banner = _sar_banner(body)
+        host, day = (banner[0], banner[4]) if banner else (None, None)
         self._send_json({"ok": True, "name": name, "host": host, "day": day})
 
     do_HEAD = do_GET
@@ -433,7 +485,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--data",
         default=_env("SG_DATA", HERE),
-        help="offline mode: directory with sarXX files [$SG_DATA]",
+        help="offline mode: directory with sarNN files [$SG_DATA]",
     )
     ap.add_argument(
         "--uploads-dir",
@@ -454,7 +506,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--max-session-mb",
         type=int,
-        default=int(_env("SG_MAX_SESSION_MB", "100")),
+        default=int(_env("SG_MAX_SESSION_MB", "512")),
         help="hosted: max total storage per session [$SG_MAX_SESSION_MB]",
     )
     ap.add_argument(

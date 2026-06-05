@@ -17,14 +17,14 @@ The backend binds to loopback and runs behind a reverse proxy. A request passes 
 layers:
 
 ```
-Internet  ->  Caddy (TLS, body cap, timeouts)  ->  sargeant (loopback)  ->  per-session tmpfs dirs
+Internet → Caddy (TLS, body cap, timeouts) → sargeant (loopback) → per-session tmpfs dirs
 ```
 
 In the app:
 
 * Each visitor gets a random session cookie that maps to its own directory.
 * Path-traversal guards and filename sanitization apply to every path.
-* Uploads are capped at 25 MB per file, and at 100 MB and 64 files per session by default.
+* Uploads are capped at 25 MB per file, and at 512 MB and 64 files per session by default.
 * Parsing is bounded by a maximum number of sections and rows, and the report is flagged `truncated`
   if it hits a ceiling.
 * A background janitor removes idle sessions once they pass their TTL.
@@ -57,7 +57,7 @@ same `SG_*` variables documented in the README configuration table:
 ```yaml
 environment:
   SG_MAX_UPLOAD_MB: "25"
-  SG_MAX_SESSION_MB: "100"
+  SG_MAX_SESSION_MB: "512"
   SG_MAX_FILES: "64"
   SG_SESSION_TTL_HOURS: "1"
   SG_BEHIND_TLS: "0"     # set to "1" only when a TLS proxy sits in front
@@ -73,9 +73,9 @@ The same thing with plain `docker run`:
 docker build -t sargeant .
 docker run -d --name sargeant --restart unless-stopped \
   -p 127.0.0.1:8799:8799 \
-  --read-only --tmpfs /tmp:size=16m --tmpfs /data:size=512m,mode=1777 \
+  --read-only --tmpfs /tmp:size=16m --tmpfs /data:size=768m,mode=1777 \
   --cap-drop ALL --security-opt no-new-privileges \
-  --pids-limit 256 --memory 512m --cpus 1.0 \
+  --pids-limit 256 --memory 1g --cpus 1.0 \
   sargeant
 ```
 
@@ -97,7 +97,7 @@ parsing, traversal guards, the janitor, and hostname scrubbing) all still apply.
 For the RAM-backed, wiped-on-restart behavior, put the uploads directory on a tmpfs:
 
 ```sh
-mount -t tmpfs -o size=512m,mode=0700 tmpfs /var/lib/sargeant/uploads
+mount -t tmpfs -o size=1g,mode=0700 tmpfs /var/lib/sargeant/uploads
 ```
 
 Adjust the caps with `--max-upload-mb`, `--max-session-mb`, `--max-files`, and

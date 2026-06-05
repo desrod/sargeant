@@ -21,7 +21,7 @@ services:
 
     environment:
       SG_MAX_UPLOAD_MB: "25"      # max size of a single uploaded file
-      SG_MAX_SESSION_MB: "100"    # max total storage per session
+      SG_MAX_SESSION_MB: "512"    # max total storage per session
       SG_MAX_FILES: "64"          # max files per session
       SG_SESSION_TTL_HOURS: "1"   # idle session lifetime before it's reaped
       SG_BEHIND_TLS: "0"          # "1" only behind a TLS proxy (forces Secure cookie)
@@ -31,14 +31,16 @@ services:
     read_only: true                # immutable root filesystem...
     tmpfs:
       - /tmp:size=16m,mode=1777
-      - /data:size=512m,mode=1777  # ...except uploads, on a capped RAM disk
+      - /data:size=768m,mode=1777  # ...except uploads, on a capped RAM disk
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
 
     # resource ceilings
-    mem_limit: 512m
+    # tmpfs usage counts against mem_limit, so keep it above the /data size
+    # (768m) plus parsing headroom. The 512MB session cap fits inside /data.
+    mem_limit: 1g
     pids_limit: 256
     cpus: 1.0
 

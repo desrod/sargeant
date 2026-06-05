@@ -42,7 +42,7 @@ const PALETTE = ["#06c", "#e95420", "#0e8420", "#c7162b", "#f99b11", "#7a2dc0",
     "#00a3a3", "#b34b00", "#5c5c5c", "#2a7de1"
 ];
 
-// ------------------------------------------------------------------ utils
+// utils
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, txt) => {
     const e = document.createElement(tag);
@@ -70,7 +70,7 @@ function defaultEntities(sec) {
     return sec.entities.slice(0, 4); // first few DEV/IFACE
 }
 
-// ------------------------------------------------------------------ data
+// data
 async function loadFiles(selectName) {
     const r = await fetch("/api/files");
     const {
@@ -115,30 +115,39 @@ async function uploadFiles(fileList) {
     }
     btn.disabled = true;
     let lastOk = null;
-    for (const f of files) {
-        status.textContent = `Uploading ${f.name}…`;
+    let loaded = 0;
+    const skipped = [];
+    for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        status.textContent = `Uploading ${i + 1}/${files.length}: ${f.name}…`;
         try {
             const r = await fetch(`/api/upload?name=${encodeURIComponent(f.name)}`, {
                 method: "POST",
                 body: f,
             });
             const j = await r.json().catch(() => ({}));
-            if (!r.ok) {
-                status.textContent = `${f.name}: ${j.error || r.status}`;
-                break;
+            if (r.ok) {
+                loaded++;
+                lastOk = j.name;
+            } else {
+                // Skip what the server can't use (binary saNN, over quota, …) and
+                // keep going, rather than aborting the whole batch.
+                skipped.push(`${f.name}: ${j.error || r.status}`);
             }
-            lastOk = j.name;
         } catch (err) {
-            status.textContent = `${f.name}: ${err}`;
-            break;
+            skipped.push(`${f.name}: ${err}`);
         }
     }
     btn.disabled = false;
-    if (lastOk) {
-        status.textContent = `Loaded ${lastOk}.`;
-        $("#upload-input").value = "";
-        await loadFiles(lastOk);
+    $("#upload-input").value = "";
+
+    let msg = loaded ? `Loaded ${loaded} file${loaded === 1 ? "" : "s"}.` : "No files loaded.";
+    if (skipped.length) {
+        const eg = skipped.length > 1 ? "e.g. " : "";
+        msg += ` Skipped ${skipped.length}, ${eg}${skipped[0]}.`;
     }
+    status.textContent = msg;
+    if (lastOk) await loadFiles(lastOk);
 }
 
 async function loadReport(name) {
@@ -148,16 +157,25 @@ async function loadReport(name) {
         alert(`Failed to load ${name}: ${e.error || r.status}`);
         return;
     }
+    // Remember the metric we're viewing so switching files keeps us on it.
+    const prev = state.section;
     state.report = await r.json();
     state.section = null;
     $("#host-meta").textContent =
         `${state.report.host || ""} · ${state.report.kernel || ""} · ${state.report.day || ""}`;
     renderSectionList();
-    // Honour a deep link (#file/sectionIndex); else show the first metric so the
-    // user never lands on a dead empty state.
     const items = document.querySelectorAll(".p-side-nav__item");
+    const sections = state.report.sections;
+    // Priority: a deep link for this file, else the same metric we were on (so
+    // changing the day doesn't reset us to CPU), else the first metric.
     const hash = location.hash.match(/^#([^/]+)\/(\d+)$/);
-    const wantIdx = hash && hash[1] === name ? Math.min(+hash[2], items.length - 1) : 0;
+    let wantIdx = 0;
+    if (hash && hash[1] === name) {
+        wantIdx = Math.min(+hash[2], items.length - 1);
+    } else if (prev) {
+        const byName = sections.findIndex((s) => s.name === prev.name);
+        if (byName >= 0) wantIdx = byName;
+    }
     if (items.length) {
         selectSection(wantIdx, items[wantIdx]);
     } else {
@@ -167,7 +185,7 @@ async function loadReport(name) {
     }
 }
 
-// ------------------------------------------------------------------ nav
+// nav
 function renderSectionList() {
     const ul = $("#section-list");
     ul.innerHTML = "";
@@ -218,7 +236,7 @@ function renderEntityBar() {
     });
 }
 
-// ------------------------------------------------------------------ charts
+// charts
 function buildSeriesData(sec, colIdx) {
     // Returns [xs, ...ySeries] aligned on the union of timestamps.
     // For keyed sections one y-series per selected entity; else a single series.
@@ -339,7 +357,7 @@ function renderCharts() {
     resizeObs.observe(host);
 }
 
-// ------------------------------------------------------------------ init
+// init
 $("#file-select").addEventListener("change", (e) => loadReport(e.target.value));
 $("#upload-btn").addEventListener("click", () => uploadFiles($("#upload-input").files));
 loadFiles().catch((err) => {
