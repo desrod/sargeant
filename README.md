@@ -113,7 +113,4 @@ python3 parser.py sarXX --full   # the full report as JSON
 
 ## A note on the stylesheet
 
-`static/vanilla.css` is a small stylesheet that follows [Canonical's Vanilla design language]
-(https://design.ubuntu.com/vanilla), the Ubuntu typeface and Vanilla's color and spacing tokens) so
-the app stays self-contained and offline. It uses Vanilla's `p-*` class names, so you can drop in
-the full `vanilla-framework.min.css` build without touching the markup.
+`static/vanilla.css` is a small stylesheet that follows [Canonical's Vanilla design language](https://design.ubuntu.com/vanilla), the Ubuntu typeface and Vanilla's color and spacing tokens) so the app stays self-contained and offline. It uses Vanilla's `p-*` class names, so you can drop in the full `vanilla-framework.min.css` build without touching the markup.
