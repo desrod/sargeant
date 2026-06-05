@@ -433,7 +433,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--data",
         default=_env("SG_DATA", HERE),
-        help="offline mode: directory with sarNN files [$SG_DATA]",
+        help="offline mode: directory with sarXX files [$SG_DATA]",
     )
     ap.add_argument(
         "--uploads-dir",
