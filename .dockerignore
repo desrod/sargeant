@@ -1,0 +1,12 @@
+# Keep the build context tiny — only source the image needs.
+__pycache__/
+*.pyc
+.venv/
+.gitignore
+.git/
+*.md
+docker-compose.yaml
+Dockerfile
+.dockerignore
+Caddyfile
+

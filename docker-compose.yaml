@@ -1,0 +1,51 @@
+# sargeant — PORTABLE / self-host config.
+#
+#   docker compose up -d          # build + run, works anywhere
+#   open http://127.0.0.1:8799/
+#
+# Self-contained: no host paths, no Docker Desktop File Sharing, no prep. The UI
+# is baked into the image and uploads live on a Docker-managed tmpfs (RAM-backed,
+# wiped on restart). This is the file to hand to anyone who wants to self-host.
+
+services:
+  sargeant:
+    build: .
+    image: sargeant
+    container_name: sargeant
+    restart: unless-stopped
+
+    # Loopback only — reach it from this host, or front it with a reverse proxy.
+    # Change to "8799:8799" to expose directly on the LAN.
+    ports:
+      - "127.0.0.1:8799:8799"
+
+    environment:
+      SG_MAX_UPLOAD_MB: "25"      # max size of a single uploaded file
+      SG_MAX_SESSION_MB: "100"    # max total storage per session
+      SG_MAX_FILES: "64"          # max files per session
+      SG_SESSION_TTL_HOURS: "1"   # idle session lifetime before it's reaped
+      SG_BEHIND_TLS: "0"          # "1" only behind a TLS proxy (forces Secure cookie)
+      SG_PORT: "8799"
+
+    # sandboxing
+    read_only: true                # immutable root filesystem...
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+      - /data:size=512m,mode=1777  # ...except uploads, on a capped RAM disk
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    # resource ceilings
+    mem_limit: 512m
+    pids_limit: 256
+    cpus: 1.0
+
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request,os; urllib.request.urlopen('http://127.0.0.1:'+os.environ['SG_PORT']+'/api/files').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s

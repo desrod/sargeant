@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Local tooling / editor
+.DS_Store
+
+# Runtime artifacts (uploads, atomic-write temp files, local sar data)
+uploads/
+*.part
+sar[0-9][0-9]
+sa[0-9][0-9]
+

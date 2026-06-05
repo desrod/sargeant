@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+   <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>sargeant — sar viewer</title>
+      <link rel="stylesheet" href="/static/uplot.css">
+      <link rel="stylesheet" href="/static/vanilla.css">
+   </head>
+   <body>
+      <header class="p-navigation">
+         <div class="p-navigation__banner">
+            <span class="p-navigation__logo">sg</span>
+            <span class="p-navigation__title">sargeant</span>
+            <span class="p-navigation__meta" id="host-meta"></span>
+         </div>
+      </header>
+      <div class="l-shell">
+         <aside class="l-aside">
+            <div class="aside-block" id="upload-block" hidden>
+               <h3>Upload sar data</h3>
+               <input type="file" id="upload-input" multiple>
+               <button class="p-button" id="upload-btn" type="button">Upload &amp; analyze</button>
+               <p class="upload-status" id="upload-status"></p>
+            </div>
+            <div class="aside-block">
+               <h3>Day</h3>
+               <select id="file-select"></select>
+            </div>
+            <div class="aside-block" style="padding-left:0;padding-right:0;">
+               <h3 style="padding:0 1.25rem;">Metrics</h3>
+               <ul class="p-side-nav" id="section-list"></ul>
+            </div>
+         </aside>
+         <main class="l-main">
+            <div id="entity-bar" class="u-hide">
+               <label>Series</label>
+               <div class="p-chip-row" id="entity-chips"></div>
+            </div>
+            <div id="charts"></div>
+            <div id="empty" class="p-empty">Select a metric on the left to plot it.</div>
+         </main>
+      </div>
+      <script src="/static/uplot.js"></script>
+      <script src="/static/app.js"></script>
+   </body>
+</html>

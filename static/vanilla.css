@@ -1,0 +1,308 @@
+/* sargeant — compact stylesheet in Canonical Vanilla design language.
+ *
+ * This is a lightweight, offline-vendored subset that mirrors Vanilla's design
+ * tokens (Ubuntu typeface, colour palette, 0.5rem spacing grid). It can be
+ * swapped for the full `vanilla-framework.min.css` build without markup changes
+ * — class names follow Vanilla conventions (p-* / u-*). See project memory
+ * `sargeant-stack` for the offline rationale.
+ */
+
+:root {
+	--vf-color-brand: #e95420;
+	/* Ubuntu orange  */
+	--vf-color-link: #06c;
+	/* Vanilla link   */
+	--vf-color-text: #111;
+	--vf-color-mid: #666;
+	--vf-color-bg: #fff;
+	--vf-color-bg-alt: #f7f7f7;
+	--vf-color-border: #cdcdcd;
+	--vf-color-border-low: #e5e5e5;
+	--vf-color-positive: #0e8420;
+	--vf-color-negative: #c7162b;
+	--vf-color-caution: #f99b11;
+	--vf-spacing: 0.5rem;
+	--vf-font: "Ubuntu", -apple-system, "Segoe UI", Roboto, Oxygen, Cantarell,
+		"Helvetica Neue", Arial, sans-serif;
+	--vf-mono: "Ubuntu Mono", "Source Code Pro", Consolas, Menlo, monospace;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html {
+	font-size: 16px;
+}
+
+body {
+	margin: 0;
+	font-family: var(--vf-font);
+	color: var(--vf-color-text);
+	background: var(--vf-color-bg);
+	line-height: 1.5;
+}
+
+a {
+	color: var(--vf-color-link);
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+h1,
+h2,
+h3 {
+	font-weight: 300;
+	line-height: 1.2;
+	margin: 0 0 0.5rem;
+}
+
+h1 {
+	font-size: 2rem;
+}
+
+h2 {
+	font-size: 1.5rem;
+}
+
+h3 {
+	font-size: 1.125rem;
+	font-weight: 400;
+}
+
+/* Vanilla-style top nav */
+.p-navigation {
+	background: #2c2c2c;
+	color: #fff;
+}
+
+.p-navigation__banner {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	padding: 0.75rem 1.5rem;
+	border-bottom: 3px solid var(--vf-color-brand);
+}
+
+.p-navigation__logo {
+	width: 1.75rem;
+	height: 1.75rem;
+	border-radius: 4px;
+	background: var(--vf-color-brand);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	font-weight: 700;
+	color: #fff;
+}
+
+.p-navigation__title {
+	font-size: 1.125rem;
+	font-weight: 400;
+	color: #fff;
+}
+
+.p-navigation__meta {
+	margin-left: auto;
+	color: #bbb;
+	font-size: 0.8rem;
+}
+
+/* layout */
+.l-shell {
+	display: flex;
+	min-height: calc(100vh - 56px);
+}
+
+.l-aside {
+	width: 280px;
+	flex: 0 0 280px;
+	border-right: 1px solid var(--vf-color-border-low);
+	background: var(--vf-color-bg-alt);
+	overflow-y: auto;
+	max-height: calc(100vh - 56px);
+}
+
+.l-main {
+	flex: 1 1 auto;
+	padding: 1.5rem;
+	overflow-x: hidden;
+}
+
+.aside-block {
+	padding: 1rem 1.25rem;
+	border-bottom: 1px solid var(--vf-color-border-low);
+}
+
+.aside-block h3 {
+	color: var(--vf-color-mid);
+	text-transform: uppercase;
+	font-size: 0.7rem;
+	letter-spacing: 0.05em;
+	margin-bottom: 0.5rem;
+}
+
+/* form controls */
+select,
+.p-button {
+	font-family: inherit;
+	font-size: 0.875rem;
+	border: 1px solid var(--vf-color-border);
+	border-radius: 3px;
+	padding: 0.4rem 0.6rem;
+	background: #fff;
+	width: 100%;
+}
+
+label {
+	display: block;
+	font-size: 0.8rem;
+	color: var(--vf-color-mid);
+	margin: 0.5rem 0 0.2rem;
+}
+
+/* section list (side nav) */
+.p-side-nav {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.p-side-nav__item {
+	padding: 0.45rem 1.25rem;
+	cursor: pointer;
+	font-size: 0.875rem;
+	border-left: 3px solid transparent;
+	display: flex;
+	justify-content: space-between;
+	gap: 0.5rem;
+}
+
+.p-side-nav__item:hover {
+	background: #efefef;
+}
+
+.p-side-nav__item.is-active {
+	background: #fff;
+	border-left-color: var(--vf-color-brand);
+	font-weight: 500;
+}
+
+.p-side-nav__count {
+	color: var(--vf-color-mid);
+	font-size: 0.75rem;
+}
+
+/* chips and salsa / entity picker */
+.p-chip-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem;
+	margin: 0.5rem 0 1rem;
+}
+
+.p-chip {
+	font-size: 0.75rem;
+	padding: 0.2rem 0.55rem;
+	border-radius: 1rem;
+	border: 1px solid var(--vf-color-border);
+	background: #fff;
+	cursor: pointer;
+	font-family: var(--vf-mono);
+}
+
+.p-chip.is-on {
+	background: var(--vf-color-link);
+	color: #fff;
+	border-color: var(--vf-color-link);
+}
+
+/* cards / charts */
+.p-card {
+	border: 1px solid var(--vf-color-border-low);
+	border-radius: 4px;
+	padding: 1rem 1.25rem;
+	margin-bottom: 1.25rem;
+	background: #fff;
+}
+
+.p-card__header {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	margin-bottom: 0.5rem;
+	gap: 1rem;
+}
+
+.p-card__title {
+	font-size: 1rem;
+	font-weight: 500;
+}
+
+.p-card__sub {
+	color: var(--vf-color-mid);
+	font-size: 0.8rem;
+	font-family: var(--vf-mono);
+}
+
+.chart-host {
+	width: 100%;
+}
+
+.p-muted {
+	color: var(--vf-color-mid);
+}
+
+.p-empty {
+	padding: 3rem 1rem;
+	text-align: center;
+	color: var(--vf-color-mid);
+}
+
+.u-hide {
+	display: none !important;
+}
+
+/* upload block */
+#upload-input {
+	width: 100%;
+	font-size: 0.8rem;
+	margin-bottom: 0.5rem;
+}
+
+.p-button {
+	cursor: pointer;
+}
+
+#upload-btn {
+	background: var(--vf-color-accent, #06c);
+	color: #fff;
+	border-color: var(--vf-color-accent, #06c);
+}
+
+#upload-btn:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+.upload-status {
+	font-size: 0.75rem;
+	color: var(--vf-color-mid);
+	margin: 0.4rem 0 0;
+	min-height: 1em;
+	font-family: var(--vf-mono);
+}
+
+/* uPlot legend tweaks to match palette */
+.u-legend {
+	font-family: var(--vf-mono);
+	font-size: 0.75rem;
+}
+
+.u-legend .u-marker {
+	width: 0.8em;
+	height: 0.8em;
+}
