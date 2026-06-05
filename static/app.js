@@ -56,6 +56,38 @@ function hmsToSeconds(t) {
     return h * 3600 + m * 60 + s;
 }
 
+// Seconds-since-midnight (possibly past 86400 after a rollover) -> "HH:MM".
+function fmtHM(secs) {
+    const h = Math.floor(secs / 3600),
+        m = Math.floor((secs % 3600) / 60);
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+// Seconds-since-day0-midnight (can exceed 86400 when sar rolls past midnight)
+// -> "YYYY-MM-DD HH:MM" given the report's start date. Without a date, "HH:MM".
+function fmtDateTime(day0, secs) {
+    const time = fmtHM(((secs % 86400) + 86400) % 86400);
+    if (!day0) return time;
+    const dayIdx = Math.floor(secs / 86400);
+    if (dayIdx === 0) return `${day0} ${time}`;
+    const d = new Date(`${day0}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + dayIdx);
+    return `${d.toISOString().slice(0, 10)} ${time}`;
+}
+
+// "YYYY-MM-DD HH:MM → HH:MM" when the window stays on one date; shows both dates
+// when it crosses midnight; degrades to "HH:MM → HH:MM" when no date is known.
+function windowLabel(day0, min, max) {
+    const s = fmtDateTime(day0, min),
+        e = fmtDateTime(day0, max);
+    const sp = s.split(" "),
+        ep = e.split(" ");
+    if (sp.length === 2 && ep.length === 2 && sp[0] === ep[0]) {
+        return `${sp[0]} ${sp[1]} → ${ep[1]}`;
+    }
+    return `${s} → ${e}`;
+}
+
 function sectionLabel(sec) {
     const first = sec.columns[0];
     const friendly = FRIENDLY[first];
@@ -285,9 +317,44 @@ function makeChart(host, sec, colIdx) {
     head.appendChild(el("span", "p-card__title", colName));
     head.appendChild(el("span", "p-card__sub", sec.key ? `per ${sec.key}` : "system-wide"));
     card.appendChild(head);
+
+    // Read-only bar above the chart: a proportional segment showing the visible
+    // time window relative to the whole day, plus the window as text. It mirrors
+    // the drag-zoom on the chart (and the double-click reset).
+    const tlRow = el("div", "chart-timeline-row");
+    const track = el("div", "chart-timeline");
+    const fill = el("div", "chart-timeline__fill");
+    track.appendChild(fill);
+    const tlLabel = el("span", "chart-timeline__label");
+    tlRow.appendChild(track);
+    tlRow.appendChild(tlLabel);
+    card.appendChild(tlRow);
+
     const mount = el("div", "chart-host");
     card.appendChild(mount);
     host.appendChild(card);
+
+    const full0 = xs.length ? xs[0] : 0;
+    const full1 = xs.length ? xs[xs.length - 1] : 0;
+    const fullSpan = full1 - full0 || 1;
+    const day0 = state.report && state.report.day ? state.report.day : null;
+
+    function updateTimeline(u) {
+        let min = u.scales.x.min,
+            max = u.scales.x.max;
+        if (min == null || max == null) {
+            min = full0;
+            max = full1;
+        }
+        // Clamp to the data range (uPlot can pad the scale a little).
+        min = Math.max(min, full0);
+        max = Math.min(max, full1);
+        const left = ((min - full0) / fullSpan) * 100;
+        const width = ((max - min) / fullSpan) * 100;
+        fill.style.left = `${Math.max(0, Math.min(100, left))}%`;
+        fill.style.width = `${Math.max(0, Math.min(100, width))}%`;
+        tlLabel.textContent = windowLabel(day0, min, max);
+    }
 
     const uSeries = [{}];
     series.forEach((_, i) => {
@@ -317,36 +384,64 @@ function makeChart(host, sec, colIdx) {
             }
         },
         axes: [{
-                values: (u, vals) => vals.map((v) => {
-                    const h = Math.floor(v / 3600),
-                        m = Math.floor((v % 3600) / 60);
-                    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-                }),
+                values: (u, vals) => vals.map(fmtHM),
             },
             {},
         ],
         series: uSeries,
+        hooks: {
+            setScale: [(u, key) => {
+                if (key !== "x") return;
+                updateTimeline(u);
+                syncZoom(u); // mirror this window onto every other chart
+            }],
+        },
     };
 
-    return new uPlot(opts, [xs, ...series], mount);
+    const u = new uPlot(opts, [xs, ...series], mount);
+    updateTimeline(u); // initial full-range state
+    return u;
 }
 
 let resizeObs = null;
+let chartInstances = []; // the current section's uPlot charts (for zoom sync)
+let zoomSyncing = false; // re-entrancy guard while mirroring a zoom
+
+// Mirror one chart's x-window onto every other chart on the page, so zooming
+// (or double-click resetting) any chart correlates the same window across all.
+function syncZoom(src) {
+    if (zoomSyncing) return;
+    zoomSyncing = true;
+    const {
+        min,
+        max
+    } = src.scales.x;
+    for (const c of chartInstances) {
+        if (c !== src && (c.scales.x.min !== min || c.scales.x.max !== max)) {
+            c.setScale("x", {
+                min,
+                max
+            });
+        }
+    }
+    zoomSyncing = false;
+}
 
 function renderCharts() {
     const host = $("#charts");
+    chartInstances.forEach((c) => c.destroy());
+    chartInstances = [];
     host.innerHTML = "";
     $("#empty").classList.add("u-hide");
     const sec = state.section;
     if (!sec) return;
 
-    const charts = [];
-    sec.columns.forEach((_, idx) => charts.push(makeChart(host, sec, idx)));
+    sec.columns.forEach((_, idx) => chartInstances.push(makeChart(host, sec, idx)));
 
     // Keep charts sized to their container.
     if (resizeObs) resizeObs.disconnect();
     resizeObs = new ResizeObserver(() => {
-        charts.forEach((c) => {
+        chartInstances.forEach((c) => {
             const w = c.root.parentElement.clientWidth;
             if (w && Math.abs(w - c.width) > 2) c.setSize({
                 width: w,

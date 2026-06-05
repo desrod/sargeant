@@ -252,6 +252,39 @@ label {
 	width: 100%;
 }
 
+/* read-only timeline bar above each chart (reflects the drag-zoom window) */
+.chart-timeline-row {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	margin-bottom: 0.6rem;
+}
+.chart-timeline {
+	position: relative;
+	flex: 1;
+	height: 4px;
+	border-radius: 2px;
+	background: var(--vf-color-border-low);
+	overflow: hidden;
+}
+.chart-timeline__fill {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: 100%;
+	background: var(--vf-color-link);
+	border-radius: 2px;
+}
+.chart-timeline__label {
+	color: var(--vf-color-mid);
+	font-size: 0.72rem;
+	font-family: var(--vf-mono);
+	white-space: nowrap;
+	min-width: 8.5em;
+	text-align: right;
+}
+
 .p-muted {
 	color: var(--vf-color-mid);
 }
