@@ -129,6 +129,7 @@ async function loadFiles(selectName) {
         $("#charts").innerHTML = "";
         $("#section-list").innerHTML = "";
         $("#entity-bar").classList.add("u-hide");
+        $("#export-btn").disabled = true;
         $("#empty").textContent = uploads ?
             "Upload a sar text file on the left to analyse it." :
             "No sar files found.";
@@ -214,6 +215,7 @@ async function loadReport(name) {
         $("#charts").innerHTML = "";
         $("#entity-bar").classList.add("u-hide");
         $("#empty").classList.remove("u-hide");
+        $("#export-btn").disabled = true;
     }
 }
 
@@ -433,10 +435,12 @@ function renderCharts() {
     chartInstances = [];
     host.innerHTML = "";
     $("#empty").classList.add("u-hide");
+    $("#export-btn").disabled = true;
     const sec = state.section;
     if (!sec) return;
 
     sec.columns.forEach((_, idx) => chartInstances.push(makeChart(host, sec, idx)));
+    $("#export-btn").disabled = false;
 
     // Keep charts sized to their container.
     if (resizeObs) resizeObs.disconnect();
@@ -451,6 +455,49 @@ function renderCharts() {
     });
     resizeObs.observe(host);
 }
+
+// ------------------------------------------------------------- PDF export
+// Builds /api/export for what is on screen right now: the current section's
+// columns (KEY-qualified so names like DEV:tps stay unambiguous), the chip
+// selection, and the zoom window if one chart is zoomed in.
+function exportPdfUrl() {
+    const sec = state.section;
+    const file = $("#file-select").value;
+    if (!sec || !file) return null;
+    const metrics = sec.columns.map((c) => (sec.key ? `${sec.key}:${c}` : c));
+    const p = new URLSearchParams({
+        file,
+        metrics: metrics.join(","),
+    });
+    if (sec.key && state.entities.size) {
+        p.set("entities", [...state.entities].join(","));
+    }
+    const u = chartInstances[0];
+    if (u && u.data[0].length) {
+        const xs = u.data[0];
+        const {
+            min,
+            max
+        } = u.scales.x;
+        if (min != null && max != null &&
+            (min > xs[0] + 1e-9 || max < xs[xs.length - 1] - 1e-9)) {
+            p.set("from", Math.floor(min));
+            p.set("to", Math.ceil(max));
+        }
+    }
+    return `/api/export?${p}`;
+}
+
+$("#export-btn").addEventListener("click", () => {
+    const url = exportPdfUrl();
+    if (!url) return;
+    const a = el("a");
+    a.href = url;
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+});
 
 // init
 $("#file-select").addEventListener("change", (e) => loadReport(e.target.value));

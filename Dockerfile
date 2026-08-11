@@ -20,7 +20,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN adduser -D -u 10001 -s /sbin/nologin sargeant
 
 WORKDIR /app
-COPY parser.py server.py ./
+COPY parser.py pdfreport.py server.py ./
 COPY static/ ./static/
 
 # Hosted (multi-tenant) defaults. Uploads live on /data, which docker-compose

@@ -27,12 +27,15 @@ GET  /                          -> static index.html
 GET  /static/<file>             -> vendored CSS/JS assets
 GET  /api/files                 -> {"files": [{"name","day","host"}...]}
 GET  /api/data?file=<name>      -> full parsed report (JSON)
+GET  /api/export?file=<name>&metrics=a,b[&entities=..&from=..&to=..]
+                                -> selected charts rendered as a PDF download
 POST /api/upload?name=<fname>   -> (hosted mode only) store raw body, returns meta
 
 Usage
 -----
     python3 server.py [--data DIR] [--host HOST] [--port PORT]
     python3 server.py --uploads-dir DIR --host 0.0.0.0 --behind-tls
+    python3 server.py --output foo.pdf --metrics kbhugfree,tps,wtps,dtps
 """
 
 from __future__ import annotations
@@ -41,6 +44,7 @@ import argparse
 import json
 import os
 import parser as sar
+import pdfreport
 import re
 import secrets
 import shutil
@@ -282,10 +286,18 @@ class Handler(BaseHTTPRequestHandler):
         return Config.data_dir
 
     # Low-level file send, enable gzip in Caddy also as needed for compression
-    def _send(self, code: int, body: bytes, ctype: str) -> None:
+    def _send(
+        self,
+        code: int,
+        body: bytes,
+        ctype: str,
+        extra_headers: list[tuple[str, str]] | None = None,
+    ) -> None:
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        for name, value in extra_headers or ():
+            self.send_header(name, value)
         if self._set_cookie:
             self.send_header("Set-Cookie", self._set_cookie)
             self._set_cookie = None
@@ -380,6 +392,64 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_error_json(500, f"parse error: {exc}")
                 return
             self._send_json(body)
+            return
+
+        if route == "/api/export":
+            name = (qs.get("file") or [""])[0]
+            data_dir = self._current_data_dir()
+            path = _resolve_in(data_dir, name, Config.multiuser()) if data_dir else None
+            if not path:
+                self._send_error_json(404, f"no such sar file: {name!r}")
+                return
+            metrics = [
+                m.strip()
+                for m in (qs.get("metrics") or [""])[0].split(",")
+                if m.strip()
+            ]
+            if not metrics:
+                self._send_error_json(400, "missing ?metrics=col1,col2,…")
+                return
+            raw_ents = (qs.get("entities") or [""])[0]
+            entities = [e for e in raw_ents.split(",") if e] or None
+
+            def _qs_float(key: str) -> float | None:
+                raw = (qs.get(key) or [None])[0]
+                try:
+                    return float(raw) if raw not in (None, "") else None
+                except ValueError:
+                    return None
+
+            try:
+                report = json.loads(_report_json(path))
+            except Exception as exc:  # noqa: BLE001, same contract as /api/data
+                self._send_error_json(500, f"parse error: {exc}")
+                return
+            try:
+                blob = pdfreport.render_pdf(
+                    report,
+                    metrics,
+                    entities,
+                    t_from=_qs_float("from"),
+                    t_to=_qs_float("to"),
+                    source_name=name,
+                )
+            except pdfreport.ExportError as exc:
+                self._send_error_json(400, str(exc))
+                return
+            # `name` passed _resolve_in, so it is already flat and shell-safe.
+            base = os.path.splitext(name)[0]
+            self._send(
+                200,
+                blob,
+                "application/pdf",
+                extra_headers=[
+                    (
+                        "Content-Disposition",
+                        f'attachment; filename="sargeant-{base}.pdf"',
+                    ),
+                    ("Cache-Control", "no-store"),
+                ],
+            )
             return
 
         self._send_error_json(404, "not found")
@@ -478,6 +548,56 @@ def _env_bool(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _export_cli(args) -> int:
+    """--output mode: render --metrics to a PDF from the offline data dir and
+    exit without starting the server."""
+    data_dir = os.path.realpath(args.data)
+    names = _list_files(data_dir, multiuser=False)
+    if not names:
+        print(f"sargeant: no sarNN files in {data_dir}", file=sys.stderr)
+        return 2
+    if args.file:
+        name = args.file
+        if name not in names:
+            print(
+                f"sargeant: no such file {name!r} in {data_dir}; "
+                f"have: {', '.join(names)}",
+                file=sys.stderr,
+            )
+            return 2
+    else:
+        # Same default as the UI's day picker: the newest day.
+        metas = _file_meta(data_dir, multiuser=False)
+        name = metas[-1]["name"] if metas else names[-1]
+    path = _resolve_in(data_dir, name, multiuser=False)
+    if not path:
+        print(f"sargeant: cannot read {name!r} in {data_dir}", file=sys.stderr)
+        return 2
+
+    # Offline mode trusts its local files: parse without the defensive caps.
+    report = sar.parse_file(path, max_sections=None, max_rows=None).to_dict()
+    metrics = [m.strip() for m in args.metrics.split(",") if m.strip()]
+    entities = (
+        [e.strip() for e in args.entities.split(",") if e.strip()]
+        if args.entities
+        else None
+    )
+    try:
+        blob = pdfreport.render_pdf(report, metrics, entities, source_name=name)
+    except pdfreport.ExportError as exc:
+        print(f"sargeant: {exc}", file=sys.stderr)
+        print("\navailable metrics:", file=sys.stderr)
+        print(pdfreport.format_available(report), file=sys.stderr)
+        return 2
+    with open(args.output, "wb") as fh:
+        fh.write(blob)
+    print(
+        f"sargeant: wrote {args.output} — {len(metrics)} chart(s) "
+        f"from {name} ({len(blob):,} bytes)"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="sargeant sar viewer")
     # Every default is overridable by an SG_* env var (for containerized use)
@@ -529,7 +649,41 @@ def main(argv: list[str] | None = None) -> int:
         "unneeded — a TLS proxy's X-Forwarded-Proto is auto-detected "
         "[$SG_BEHIND_TLS]",
     )
+    # Export mode: render charts to a PDF and exit, no server. These are
+    # per-invocation actions, so unlike the server flags they have no SG_* env.
+    ap.add_argument(
+        "--output",
+        metavar="FILE.pdf",
+        help="export mode: write the charts named by --metrics to this PDF "
+        "and exit (uses --data, not the server)",
+    )
+    ap.add_argument(
+        "--metrics",
+        help="export: comma-separated sar columns (e.g. kbhugfree,tps,wtps). "
+        "A name found in several sections can be qualified as KEY:column, "
+        "e.g. DEV:tps",
+    )
+    ap.add_argument(
+        "--file",
+        help="export: which sarNN file to render (default: the newest day, "
+        "same as the UI)",
+    )
+    ap.add_argument(
+        "--entities",
+        help="export: comma-separated entities for keyed sections, e.g. "
+        "all,0,1 or eth0,lo (default: same as the UI — 'all' for CPU, "
+        "else the first few)",
+    )
     args = ap.parse_args(argv)
+
+    if args.output or args.metrics or args.file or args.entities:
+        if not args.output:
+            ap.error("--metrics/--file/--entities only make sense with --output")
+        if not args.metrics:
+            ap.error("--output requires --metrics (try --metrics tps)")
+        if args.uploads_dir:
+            ap.error("--output (export) and --uploads-dir (hosted) are exclusive")
+        return _export_cli(args)
 
     if args.uploads_dir:
         Config.uploads_dir = os.path.realpath(args.uploads_dir)
