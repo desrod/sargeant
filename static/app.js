@@ -11,6 +11,7 @@ const state = {
     report: null, // current parsed report
     section: null, // selected Section object
     entities: new Set(), // selected entity keys (for CPU/DEV/IFACE sections)
+    columns: new Set(), // selected metric columns within the current section
 };
 
 // Optional cosmetic labels. Anything not here falls back to the raw column —
@@ -190,8 +191,10 @@ async function loadReport(name) {
         alert(`Failed to load ${name}: ${e.error || r.status}`);
         return;
     }
-    // Remember the metric we're viewing so switching files keeps us on it.
+    // Remember the metric (and its checked columns) we're viewing so switching
+    // files keeps us on it instead of resetting to "all metrics checked".
     const prev = state.section;
+    const prevColumns = state.columns;
     state.report = await r.json();
     state.section = null;
     $("#host-meta").textContent =
@@ -210,7 +213,12 @@ async function loadReport(name) {
         if (byName >= 0) wantIdx = byName;
     }
     if (items.length) {
-        selectSection(wantIdx, items[wantIdx]);
+        // Only carry the column selection over when it's genuinely the same
+        // metric group (same column layout); otherwise fall back to "all".
+        const landed = sections[wantIdx];
+        const sameSection = prev && landed &&
+            landed.key === prev.key && landed.columns.join(",") === prev.columns.join(",");
+        selectSection(wantIdx, items[wantIdx], sameSection ? prevColumns : null);
     } else {
         $("#charts").innerHTML = "";
         $("#entity-bar").classList.add("u-hide");
@@ -235,17 +243,47 @@ function renderSectionList() {
     });
 }
 
-function selectSection(i, li) {
+// presetColumns: when set, restores this checked-columns selection instead of
+// defaulting to "all metrics checked" (used when a day switch lands back on
+// the same metric group so the user's column picks survive).
+function selectSection(i, li, presetColumns) {
     document.querySelectorAll(".p-side-nav__item")
         .forEach((n) => n.classList.remove("is-active"));
     li.classList.add("is-active");
     state.section = state.report.sections[i];
     state.entities = new Set(defaultEntities(state.section));
+    state.columns = presetColumns ?
+        new Set(state.section.columns.filter((c) => presetColumns.has(c))) :
+        new Set(state.section.columns); // all metrics on by default
     if ($("#file-select").value) {
         history.replaceState(null, "", `#${$("#file-select").value}/${i}`);
     }
+    renderColumnBar();
     renderEntityBar();
     renderCharts();
+}
+
+
+function renderColumnBar() {
+    const bar = $("#column-bar");
+    const chips = $("#column-chips");
+    chips.innerHTML = "";
+    if (!state.section.columns.length) {
+        bar.classList.add("u-hide");
+        return;
+    }
+    bar.classList.remove("u-hide");
+    state.section.columns.forEach((col) => {
+        const chip = el("button", "p-chip", col);
+        if (state.columns.has(col)) chip.classList.add("is-on");
+        chip.addEventListener("click", () => {
+            if (state.columns.has(col)) state.columns.delete(col);
+            else state.columns.add(col);
+            chip.classList.toggle("is-on");
+            renderCharts();
+        });
+        chips.appendChild(chip);
+    });
 }
 
 function renderEntityBar() {
@@ -269,6 +307,19 @@ function renderEntityBar() {
         chips.appendChild(chip);
     });
 }
+
+$("#columns-all-btn").addEventListener("click", () => {
+    if (!state.section) return;
+    state.columns = new Set(state.section.columns);
+    renderColumnBar();
+    renderCharts();
+});
+$("#columns-none-btn").addEventListener("click", () => {
+    if (!state.section) return;
+    state.columns.clear();
+    renderColumnBar();
+    renderCharts();
+});
 
 // charts
 function buildSeriesData(sec, colIdx) {
@@ -435,11 +486,24 @@ function renderCharts() {
     chartInstances = [];
     host.innerHTML = "";
     $("#empty").classList.add("u-hide");
-    $("#export-btn").disabled = true;
     const sec = state.section;
-    if (!sec) return;
+    if (!sec) {
+        $("#export-btn").disabled = true;
+        return;
+    }
 
-    sec.columns.forEach((_, idx) => chartInstances.push(makeChart(host, sec, idx)));
+    const visibleCols = sec.columns
+        .map((c, idx) => [c, idx])
+        .filter(([c]) => state.columns.has(c));
+
+    if (!visibleCols.length) {
+        $("#empty").textContent = "No metrics checked — pick at least one above to plot it.";
+        $("#empty").classList.remove("u-hide");
+        $("#export-btn").disabled = true;
+        return;
+    }
+
+    visibleCols.forEach(([, idx]) => chartInstances.push(makeChart(host, sec, idx)));
     $("#export-btn").disabled = false;
 
     // Keep charts sized to their container.
@@ -458,13 +522,15 @@ function renderCharts() {
 
 // ------------------------------------------------------------- PDF export
 // Builds /api/export for what is on screen right now: the current section's
-// columns (KEY-qualified so names like DEV:tps stay unambiguous), the chip
-// selection, and the zoom window if one chart is zoomed in.
+// checked columns (KEY-qualified so names like DEV:tps stay unambiguous), the
+// chip selection, and the zoom window if one chart is zoomed in.
 function exportPdfUrl() {
     const sec = state.section;
     const file = $("#file-select").value;
     if (!sec || !file) return null;
-    const metrics = sec.columns.map((c) => (sec.key ? `${sec.key}:${c}` : c));
+    const cols = sec.columns.filter((c) => state.columns.has(c));
+    if (!cols.length) return null;
+    const metrics = cols.map((c) => (sec.key ? `${sec.key}:${c}` : c));
     const p = new URLSearchParams({
         file,
         metrics: metrics.join(","),
