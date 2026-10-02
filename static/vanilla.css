@@ -329,6 +329,127 @@ label {
 	font-family: var(--vf-mono);
 }
 
+/* issues banner, above every metric view */
+.p-issues {
+	border: 1px solid var(--vf-color-border-low);
+	border-radius: 4px;
+	margin-bottom: 1.25rem;
+	background: #fff;
+}
+
+.p-issues--clear {
+	border-color: #bfe0c2;
+	background: #edf7ee;
+}
+
+.p-issues--clear .p-issues__bar {
+	color: var(--vf-color-positive);
+}
+
+.p-issues--clear .p-issues__context {
+	border-top-color: #bfe0c2;
+	background: transparent;
+}
+
+.p-issues__bar {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.5rem 0.75rem;
+	font-size: 0.875rem;
+	font-weight: 500;
+}
+
+.p-issues__bar .p-button {
+	width: auto;
+	margin-left: auto;
+	padding: 0.15rem 0.6rem;
+	font-size: 0.75rem;
+}
+
+.p-pill {
+	font-size: 0.75rem;
+	font-weight: 400;
+	padding: 0.1rem 0.5rem;
+	border-radius: 1rem;
+	white-space: nowrap;
+}
+
+.p-pill--crit {
+	background: #fbe6e8;
+	color: #8e1020;
+}
+
+.p-pill--warn {
+	background: #fdefd3;
+	color: #6e4400;
+}
+
+.p-pill--info {
+	background: #e3eefa;
+	color: #0b4a8c;
+}
+
+.p-issues__row {
+	display: grid;
+	grid-template-columns: 5.5rem minmax(0, 1fr);
+	gap: 0.5rem;
+	align-items: start;
+	width: 100%;
+	padding: 0.5rem 0.75rem;
+	border: 0;
+	border-top: 1px solid var(--vf-color-border-low);
+	background: none;
+	font: inherit;
+	color: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.p-issues__row:hover {
+	background: var(--vf-color-bg-alt);
+}
+
+.p-issues__row .p-pill {
+	justify-self: start;
+}
+
+.p-issues__title {
+	display: block;
+	font-size: 0.875rem;
+	font-weight: 500;
+}
+
+.p-issues__when {
+	margin-left: 0.5rem;
+	color: var(--vf-color-mid);
+	font-family: var(--vf-mono);
+	font-size: 0.75rem;
+	font-weight: 400;
+}
+
+.p-issues__detail,
+.p-issues__next {
+	display: block;
+	margin-top: 0.15rem;
+	font-size: 0.8rem;
+	line-height: 1.45;
+}
+
+.p-issues__next {
+	color: var(--vf-color-mid);
+	font-size: 0.75rem;
+}
+
+.p-issues__context {
+	margin: 0;
+	padding: 0.4rem 0.75rem;
+	border-top: 1px solid var(--vf-color-border-low);
+	background: var(--vf-color-bg-alt);
+	color: var(--vf-color-mid);
+	font-size: 0.75rem;
+}
+
 /* uPlot legend tweaks to match palette */
 .u-legend {
 	font-family: var(--vf-mono);

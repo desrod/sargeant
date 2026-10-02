@@ -129,6 +129,7 @@ async function loadFiles(selectName) {
         $("#charts").innerHTML = "";
         $("#section-list").innerHTML = "";
         $("#entity-bar").classList.add("u-hide");
+        $("#issues").classList.add("u-hide");
         $("#export-btn").disabled = true;
         $("#empty").textContent = uploads ?
             "Upload a sar text file on the left to analyse it." :
@@ -196,6 +197,7 @@ async function loadReport(name) {
     state.section = null;
     $("#host-meta").textContent =
         `${state.report.host || ""} · ${state.report.kernel || ""} · ${state.report.day || ""}`;
+    renderIssues();
     renderSectionList();
     const items = document.querySelectorAll(".p-side-nav__item");
     const sections = state.report.sections;
@@ -235,12 +237,12 @@ function renderSectionList() {
     });
 }
 
-function selectSection(i, li) {
+function selectSection(i, li, entities) {
     document.querySelectorAll(".p-side-nav__item")
         .forEach((n) => n.classList.remove("is-active"));
     li.classList.add("is-active");
     state.section = state.report.sections[i];
-    state.entities = new Set(defaultEntities(state.section));
+    state.entities = new Set(entities && entities.length ? entities : defaultEntities(state.section));
     if ($("#file-select").value) {
         history.replaceState(null, "", `#${$("#file-select").value}/${i}`);
     }
@@ -454,6 +456,91 @@ function renderCharts() {
         });
     });
     resizeObs.observe(host);
+}
+
+// ----------------------------------------------------------------- issues
+// The banner above every metric view, from issues.py via /api/data. Text goes
+// in through el() (textContent): in hosted mode, entity names in titles come
+// from untrusted uploads.
+const SEVERITY = {
+    crit: "Critical",
+    warn: "Warning",
+    info: "Info"
+};
+let issuesOpen = true;
+
+function renderIssues() {
+    const box = $("#issues");
+    const issues = state.report.issues;
+    box.innerHTML = "";
+    box.classList.toggle("u-hide", !issues);
+    if (!issues) return;
+    const findings = issues.findings;
+    const serious = findings.some((f) => f.severity !== "info");
+    box.classList.toggle("p-issues--clear", !findings.length);
+    const bar = el("div", "p-issues__bar");
+    bar.appendChild(el("span", null,
+        serious ? "Issues detected" : findings.length ? "Notes" : "No issues detected"));
+    Object.keys(SEVERITY).forEach((s) => {
+        const n = findings.filter((f) => f.severity === s).length;
+        if (n) bar.appendChild(el("span", `p-pill p-pill--${s}`, `${n} ${SEVERITY[s].toLowerCase()}`));
+    });
+    box.appendChild(bar);
+
+    const body = el("div");
+    if (findings.length) {
+        const toggle = el("button", "p-button", issuesOpen ? "Hide" : "Show");
+        toggle.type = "button";
+        toggle.setAttribute("aria-expanded", String(issuesOpen));
+        toggle.addEventListener("click", () => {
+            issuesOpen = !issuesOpen;
+            renderIssues();
+        });
+        bar.appendChild(toggle);
+        body.hidden = !issuesOpen;
+    }
+    findings.forEach((f) => {
+        const row = el("button", "p-issues__row");
+        row.type = "button";
+        row.appendChild(el("span", `p-pill p-pill--${f.severity}`, SEVERITY[f.severity]));
+        const text = el("span");
+        const title = el("span", "p-issues__title", f.title);
+        title.appendChild(el("span", "p-issues__when", f.when));
+        text.appendChild(title);
+        text.appendChild(el("span", "p-issues__detail", f.detail));
+        text.appendChild(el("span", "p-issues__next", f.next));
+        row.appendChild(text);
+        row.addEventListener("click", () => gotoFinding(f));
+        body.appendChild(row);
+    });
+    issues.context.forEach((line) => body.appendChild(el("p", "p-issues__context", line)));
+    box.appendChild(body);
+}
+
+// Open the finding's chart with its series selected and zoom to its windows;
+// the existing setScale hook mirrors the zoom onto every other chart.
+function gotoFinding(f) {
+    const sec = state.report.sections[f.section];
+    if (!sec || !sec.columns.includes(f.column)) return;
+    const items = document.querySelectorAll(".p-side-nav__item");
+    selectSection(f.section, items[f.section], f.entities.filter((e) => sec.entities.includes(e)));
+    const u = chartInstances[sec.columns.indexOf(f.column)];
+    if (!u) return;
+    u.root.closest(".p-card").scrollIntoView({
+        behavior: "smooth",
+        block: "center"
+    });
+    if (!f.windows.length) return;
+    const xs = u.data[0];
+    const t0 = f.windows[0][0],
+        t1 = f.windows[f.windows.length - 1][1];
+    const pad = Math.max((t1 - t0) / 2, 600);
+    // A new chart applies its own full-range scale in a microtask after it's
+    // built, so the zoom has to wait until that has run.
+    requestAnimationFrame(() => u.setScale("x", {
+        min: Math.max(xs[0], t0 - pad),
+        max: Math.min(xs[xs.length - 1], t1 + pad)
+    }));
 }
 
 // ------------------------------------------------------------- PDF export

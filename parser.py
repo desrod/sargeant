@@ -98,6 +98,8 @@ class SarReport:
     day: str | None  # ISO date string from the header line
     sections: list[Section] = field(default_factory=list)
     truncated: bool = False  # True if parse hit a defensive ceiling
+    # Records that aren't data, e.g. {"type": "restart", "t": "17:00:10"}
+    events: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -107,6 +109,7 @@ class SarReport:
             "ncpu": self.ncpu,
             "day": self.day,
             "truncated": self.truncated,
+            "events": self.events,
             "sections": [s.to_dict() for s in self.sections],
         }
 
@@ -273,6 +276,14 @@ def parse_text(
 
         is_time = bool(_TIME_RE.match(time_tok))
 
+        # sysstat's boot record is shaped like a section header (a timestamp
+        # after a blank line), so it must be caught before the header rule.
+        if is_time and rest[:2] == ["LINUX", "RESTART"]:
+            report.events.append({"type": "restart", "t": time_tok})
+            prev_blank = False
+            current = None
+            continue
+
         if prev_blank:
             # First line of a block. If it starts with a timestamp it is a real
             # section header; otherwise it is noise (a repeated banner, etc.).
@@ -321,6 +332,51 @@ def parse_file(
 ) -> SarReport:
     with open(path, "r", errors="replace") as fh:
         return parse_text(fh.read(), max_sections=max_sections, max_rows=max_rows)
+
+
+def hms_to_seconds(t: str) -> int:
+    h, m, s = t.split(":")
+    return int(h) * 3600 + int(m) * 60 + int(s)
+
+
+def time_axis(sec: dict) -> tuple[list[int], dict[str, int]]:
+    """Chart x values for a section dict: seconds since the report's first
+    midnight for each distinct timestamp in file order, plus each timestamp's
+    index. sar's final reading of a day wraps to 00:00, so a step backwards
+    adds a day. static/app.js buildSeriesData() applies the same rule."""
+    xs: list[int] = []
+    pos: dict[str, int] = {}
+    day_offset = 0
+    prev = -1
+    for row in sec["rows"]:
+        t = row["t"]
+        if t in pos:
+            continue
+        secs = hms_to_seconds(t)
+        if secs < prev:
+            day_offset += 86400
+        prev = secs
+        pos[t] = len(xs)
+        xs.append(secs + day_offset)
+    return xs, pos
+
+
+def build_series(
+    sec: dict, col_idx: int, entities: list[str]
+) -> tuple[list[int], list[list[float | None]], list[str]]:
+    """One y-series per selected entity (a single series for un-keyed
+    sections), aligned on time_axis(sec), with None where a row is missing."""
+    wanted = entities if sec.get("key") else [""]
+    xs, pos = time_axis(sec)
+    series: list[list[float | None]] = [[None] * len(xs) for _ in wanted]
+    slot = {e: i for i, e in enumerate(wanted)}
+    for row in sec["rows"]:
+        i = slot.get(row["e"] if sec.get("key") else "")
+        if i is None:
+            continue
+        vals = row["v"]
+        series[i][pos[row["t"]]] = vals[col_idx] if col_idx < len(vals) else None
+    return xs, series, list(wanted)
 
 
 if __name__ == "__main__":

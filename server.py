@@ -41,6 +41,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import issues
 import json
 import os
 import parser as sar
@@ -153,10 +154,12 @@ def _list_files(data_dir: str, multiuser: bool) -> list[str]:
 # defensive ceilings); offline mode trusts files and disables the ceilings.
 @lru_cache(maxsize=256)
 def _parse_cached(path: str, mtime: float, capped: bool) -> str:
-    """Parse a sar file to a JSON string, memoized on (path, mtime, mode)."""
+    """Parse and check a sar file to a JSON string, memoized on (path, mtime,
+    mode)."""
     caps = {} if capped else {"max_sections": None, "max_rows": None}
-    report = sar.parse_file(path, **caps)
-    return json.dumps(report.to_dict())
+    report = sar.parse_file(path, **caps).to_dict()
+    report["issues"] = issues.analyze(report)
+    return json.dumps(report)
 
 
 def _report_json(path: str) -> str:
@@ -577,6 +580,7 @@ def _export_cli(args) -> int:
 
     # Offline mode trusts its local files: parse without the defensive caps.
     report = sar.parse_file(path, max_sections=None, max_rows=None).to_dict()
+    report["issues"] = issues.analyze(report)
     metrics = [m.strip() for m in args.metrics.split(",") if m.strip()]
     entities = (
         [e.strip() for e in args.entities.split(",") if e.strip()]

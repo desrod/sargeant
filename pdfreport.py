@@ -24,6 +24,7 @@ it is safe to call from concurrent request threads.
 from __future__ import annotations
 
 import math
+import parser as sar
 import zlib
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
@@ -67,6 +68,15 @@ _BORDER = (0.62, 0.62, 0.62)
 _INK = (0.13, 0.13, 0.13)
 _MUTED = (0.42, 0.42, 0.42)
 
+# Page-1 issues block: tag, label and colour per severity, as in the UI.
+_SEVERITY = {
+    "crit": ("CRIT", "critical", (0.780, 0.086, 0.169)),
+    "warn": ("WARN", "warning", (0.780, 0.450, 0.000)),
+    "info": ("INFO", "info", (0.000, 0.400, 0.800)),
+}
+ISSUE_ROW_H = 22.0
+MAX_ISSUE_ROWS = 8
+
 # Text metrics & string escaping
 # Helvetica glyph widths in 1/1000 em. Only digits need to be exact (they
 # right-align the y-axis tick labels, and every Helvetica digit is 556); the
@@ -102,6 +112,24 @@ _STRING_ESCAPES |= dict.fromkeys(range(32), " ")
 
 def _text_w(s: str, size: float) -> float:
     return sum(_WIDTHS.get(ch, 556) for ch in s) * size / 1000.0
+
+
+def _fit(s: str, size: float, width: float) -> str:
+    """Trim s with an ellipsis so it fits in width points at this size."""
+    if _text_w(s, size) <= width:
+        return s
+    while s and _text_w(s + "…", size) > width:
+        s = s[:-1]
+    return s.rstrip() + "…"
+
+
+def _issue_counts(findings: list[dict]) -> str:
+    parts = [
+        f"{n} {_SEVERITY[s][1]}"
+        for s in ("crit", "warn", "info")
+        if (n := sum(f["severity"] == s for f in findings))
+    ]
+    return "Issues: " + ", ".join(parts) if parts else "No issues detected"
 
 
 def _esc(s: str) -> str:
@@ -231,12 +259,7 @@ def _serialize(pages: list[_Canvas]) -> bytes:
 
 
 # Report-side helpers (ports of the equivalent logic in static/app.js, so the
-# PDF and the UI agree about series building, rollover, and default entities)
-def _hms_to_seconds(t: str) -> int:
-    h, m, s = t.split(":")
-    return int(h) * 3600 + int(m) * 60 + int(s)
-
-
+# PDF and the UI agree about rollover and default entities)
 def _fmt_hm(secs: float) -> str:
     """Seconds-since-day0 -> 'HH:MM'. Like the UI, the midnight rollover shows
     as 24:00 rather than wrapping, so the axis stays monotonic to the eye."""
@@ -256,40 +279,6 @@ def _fmt_daytime(day0: str | None, secs: float) -> str:
     except ValueError:
         return _fmt_hm(secs)
     return f"{d.isoformat()} {hm}"
-
-
-def _build_series(
-    sec: dict, col_idx: int, entities: list[str]
-) -> tuple[list[int], list[list[float | None]], list[str]]:
-    """Port of app.js buildSeriesData(): x = union of timestamps in file
-    order with a day offset added when the clock rolls past midnight; one
-    y-series per selected entity (or a single series for un-keyed sections)."""
-    wanted = entities if sec.get("key") else [""]
-    t_index: dict[str, int] = {}
-    xs: list[int] = []
-    day_offset = 0
-    prev = -1
-    for row in sec["rows"]:
-        t = row["t"]
-        if t in t_index:
-            continue
-        secs = _hms_to_seconds(t)
-        if secs < prev:
-            day_offset += 86400
-        prev = secs
-        t_index[t] = len(xs)
-        xs.append(secs + day_offset)
-
-    series: list[list[float | None]] = [[None] * len(xs) for _ in wanted]
-    pos = {e: i for i, e in enumerate(wanted)}
-    for row in sec["rows"]:
-        ent = row["e"] if sec.get("key") else ""
-        i = pos.get(ent)
-        if i is None:
-            continue
-        vals = row["v"]
-        series[i][t_index[row["t"]]] = vals[col_idx] if col_idx < len(vals) else None
-    return xs, series, list(wanted)
 
 
 def _default_entities(sec: dict) -> list[str]:
@@ -565,7 +554,7 @@ def render_pdf(
     for spec in metrics:
         sec, col_idx = _resolve_metric(report, spec)
         ents = _pick_entities(sec, entities)
-        xs, series, labels = _build_series(sec, col_idx, ents)
+        xs, series, labels = sar.build_series(sec, col_idx, ents)
         xs, series = _window(xs, series, t_from, t_to)
         keyed = bool(sec.get("key"))
         n_all = len(sec.get("entities") or [])
@@ -584,9 +573,17 @@ def render_pdf(
             )
         )
 
-    # Paginate: page 1 carries the report banner, every page holds two slots.
+    issues = report.get("issues")
+    findings = issues["findings"] if issues else []
+    notes = issues["context"] if issues else []
+    shown = findings[:MAX_ISSUE_ROWS]
+    lines = len(notes) + (len(findings) > len(shown))
+    block_h = ISSUE_ROW_H * len(shown) + 12.0 * lines + 8.0 if shown or notes else 0.0
+
+    # Paginate: page 1 carries the report banner and the issues block, every
+    # page holds two chart slots.
     pages: list[_Canvas] = []
-    first_top = PAGE_H - MARGIN - HEADER_H
+    first_top = PAGE_H - MARGIN - HEADER_H - block_h
     other_top = PAGE_H - MARGIN
     i = 0
     while i < len(charts) or not pages:
@@ -628,8 +625,47 @@ def render_pdf(
             align="right",
         )
 
+    if issues:
+        width = PAGE_W - 2 * MARGIN
+        hdr.text(
+            MARGIN,
+            PAGE_H - MARGIN - 40,
+            _issue_counts(findings),
+            size=8.5,
+            bold=bool(findings),
+        )
+        y = PAGE_H - MARGIN - HEADER_H - 8
+        for f in shown:
+            tag, _, rgb = _SEVERITY[f["severity"]]
+            hdr.fill_color(rgb)
+            hdr.rect(MARGIN, y - 1.5, 3, 9, fill=True)
+            hdr.text(MARGIN + 8, y, tag, size=8, bold=True, rgb=rgb)
+            title = _fit(f"{f['title']} · {f['when']}", 8.5, width - 38)
+            hdr.text(MARGIN + 38, y, title, size=8.5)
+            detail = _fit(f["detail"], 7.5, width - 38)
+            hdr.text(MARGIN + 38, y - 10, detail, size=7.5, rgb=_MUTED)
+            y -= ISSUE_ROW_H
+        if len(findings) > len(shown):
+            more = f"+{len(findings) - len(shown)} more in the sargeant UI"
+            hdr.text(MARGIN + 38, y, more, size=7.5, rgb=_MUTED)
+            y -= 12
+        for note in notes:
+            hdr.text(MARGIN, y, _fit(note, 7.5, width), size=7.5, rgb=_MUTED)
+            y -= 12
+
+    page_head = " · ".join(p for p in (host, report.get("day")) if p)
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     for n, cv in enumerate(pages, start=1):
+        if n > 1 and findings:
+            cv.text(MARGIN, PAGE_H - 24, page_head, size=7.5, rgb=_MUTED)
+            cv.text(
+                PAGE_W - MARGIN,
+                PAGE_H - 24,
+                f"{_issue_counts(findings)} (see page 1)",
+                size=7.5,
+                rgb=_MUTED,
+                align="right",
+            )
         cv.text(MARGIN, 22, f"sargeant · generated {stamp}", size=7.5, rgb=_MUTED)
         cv.text(
             PAGE_W - MARGIN,
